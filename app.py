@@ -3,7 +3,7 @@ from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
 import pymupdf
-import google.generativeai as genai
+import google-genai
 import os
 import uuid
 import requests
@@ -256,5 +256,4 @@ def webhook_cinetpay():
 # ========== 11. RUN ==========
 app.layout = html.Div([dcc.Location(id='url'), html.Div(id='page-content')])
 if __name__ == '__main__':
-    import os
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
