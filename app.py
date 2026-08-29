@@ -2,15 +2,16 @@ import dash
 from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
-import pymupdf
+import pymupdf as fitz
 from google import genai
 import os
 import uuid
 import requests
+import base64 # <-- AJOUTÉ
 from dotenv import load_dotenv
 from supabase import create_client
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user
-from flask import Flask, request
+from flask import Flask, request, session
 
 load_dotenv()
 
@@ -23,11 +24,7 @@ CINETPAY_SITE_ID = os.getenv("CINETPAY_SITE_ID")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-response = client.models.generate_content(
-    model="gemini-3.6-flash",
-    contents="Salut"
-)
-print(response.text)
+
 server = Flask(__name__)
 server.secret_key = os.urandom(24)
 app = dash.Dash(__name__, server=server, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -57,8 +54,13 @@ def extraire_facture_ia(pdf_bytes):
     texte = ""
     for page in doc: texte += page.get_text()
     prompt = f"Extrait de ce texte de facture: N° Facture, Date, NIF Fournisseur, Montant HT, Montant TVA. Retourne en JSON. Texte: {texte[:4000]}"
-    response = model.generate_content(prompt)
-    return pd.DataFrame([eval(response.text.replace("```json","").replace("```",""))])
+    response = client.models.generate_content( # <-- CORRIGÉ
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+    # Nettoyage pour eval
+    json_str = response.text.replace("```json","").replace("```","").strip()
+    return pd.DataFrame([eval(json_str)])
 
 # ========== 4. LAYOUTS ==========
 login_layout = dbc.Container([
@@ -97,14 +99,17 @@ def get_dashboard_layout():
 
     ], fluid=True)
 
-# ========== 5. CALLBACKS PRINCIPAUX ==========
+# ========== 5. LAYOUT PRINCIPAL ==========
+app.layout = html.Div([dcc.Location(id='url'), html.Div(id='page-content')]) # <-- CORRIGÉ
+
+# ========== 6. CALLBACKS PRINCIPAUX ==========
 @app.callback(Output('page-content', 'children'), Input('url', 'pathname'))
 def display_page(pathname):
     if pathname == "/login" or not current_user.is_authenticated:
         return login_layout
     elif pathname == "/logout":
         logout_user()
-        return login_layout
+        return dcc.Location(pathname="/login", id="redirect-logout") # <-- CORRIGÉ
     else:
         return get_dashboard_layout()
 
@@ -115,13 +120,14 @@ def display_page(pathname):
 def update_nav(pathname, tab):
     if current_user.is_authenticated:
         res = supabase.table("users_cabinet").select("credits_perso").eq("id", current_user.id).single().execute()
-        credits = res.data["credits_perso"]
+        credits = res.data["credits_perso"] if res.data else 0
         alert = dbc.Alert(f"⚠️ Il vous reste seulement {credits} crédits !", color="danger", dismissable=True) if credits < 10 else None
         return current_user.email, f"Crédits: {credits}", alert
     return "", "Crédits: 0", None
 
 @app.callback(Output("tab-content", "children"), Input("tabs", "active_tab"))
 def render_tab_content(active_tab):
+    if not current_user.is_authenticated: return "Accès refusé"
     if active_tab == "tab-traitement":
         return html.Div([
             dcc.Upload(id='upload-pdf', children=dbc.Button("📁 Uploader PDF"), multiple=True),
@@ -150,18 +156,35 @@ def render_tab_content(active_tab):
         return html.Div([html.H3("📜 Historique"), dcc.Loading(html.Div(id="table-historique"))])
     return "Accès refusé"
 
-# ========== 6. CALLBACK LOGIN ==========
+# ========== 7. CALLBACK LOGIN + BYPASS ADMIN TEMPORAIRE ==========
 @app.callback(Output("login-output", "children"), Input("btn-login", "n_clicks"), [State("login-email", "value"), State("login-password", "value")])
 def login(n, email, password):
     if n:
+        # ===== BYPASS TEMPORAIRE ADMIN =====
+        if email == "admin@one7.com" and password == "One7Admin2026":
+            # On force la session avec les infos de ta capture
+            user_data = {
+                'id': 'admin-temp-id', 
+                'email': 'admin@one7.com',
+                'cabinet_id': '092439a5-1edf-4793-83d0-efe19bfb5c',
+                'role': 'Manager',
+                'nom': 'Manager One7'
+            }
+            login_user(User(user_data))
+            return dcc.Location(pathname="/", id="redirect")
+        # ===================================
+
+        # Login normal Supabase
         try:
             res = supabase.auth.sign_in_with_password({"email": email, "password": password})
             user_data = supabase.table("users_cabinet").select("*").eq("id", res.user.id).single().execute().data
             login_user(User(user_data))
             return dcc.Location(pathname="/", id="redirect")
-        except: return dbc.Alert("Email ou mot de passe incorrect", color="danger")
+        except Exception as e: 
+            return dbc.Alert(f"Email ou mot de passe incorrect: {str(e)}", color="danger")
+    return dash.no_update
 
-# ========== 7. CALLBACK TRAITEMENT + DÉDUCTION CRÉDIT ==========
+# ========== 8. CALLBACK TRAITEMENT + DÉDUCTION CRÉDIT ==========
 @app.callback(
     Output("output-container", "children"),
     Input("btn-traiter", "n_clicks"),
@@ -170,6 +193,7 @@ def login(n, email, password):
 )
 def traiter_factures(n, list_of_contents):
     if not list_of_contents: return dash.no_update
+    if not current_user.is_authenticated: return "Erreur: non connecté"
     
     # 1. VÉRIFIER CRÉDITS AVANT DE COMMENCER
     user_res = supabase.table("users_cabinet").select("credits_perso").eq("id", current_user.id).single().execute()
@@ -183,7 +207,7 @@ def traiter_factures(n, list_of_contents):
     all_df = []
     for i, content in enumerate(list_of_contents):
         content_type, content_string = content.split(',')
-        pdf_bytes = base64.b64decode(content_string)
+        pdf_bytes = base64.b64decode(content_string) # <-- CORRIGÉ
         df_facture = extraire_facture_ia(pdf_bytes)
         df_facture['traite_par'] = current_user.id
         df_facture['cabinet_id'] = current_user.cabinet_id
@@ -199,7 +223,7 @@ def traiter_factures(n, list_of_contents):
         supabase.table("historique_traitements").insert({
             "user_id": current_user.id, 
             "cabinet_id": current_user.cabinet_id,
-            "n_facture": row['N° Facture'],
+            "n_facture": row.get('N° Facture', 'N/A'),
             "credits_consomme": 1
         }).execute()
     
@@ -209,22 +233,23 @@ def traiter_factures(n, list_of_contents):
         dbc.Button("Télécharger Excel DGI", href="/download", color="primary")
     ])
 
-# ========== 8. CALLBACK PAIEMENT CINETPAY ==========
+# ========== 9. CALLBACK PAIEMENT CINETPAY ==========
 @app.callback(Output('payment-link-output', 'children'), Input('btn-payer', 'n_clicks'), State('input-credits', 'value'))
 def initier_paiement(n, nb_credits):
     if n and nb_credits:
         montant = nb_credits * 50
         transaction_id = f"ONE7_{current_user.cabinet_id}_{uuid.uuid4().hex[:8]}"
-        payload = {"apikey": CINETPAY_API_KEY, "site_id": CINETPAY_SITE_ID, "transaction_id": transaction_id, "amount": montant, "currency": "XOF", "description": f"{nb_credits} credits", "customer_email": current_user.email, "notify_url": "https://ton-domaine.onrender.com/webhook_cinetpay", "return_url": "https://ton-domaine.onrender.com/"}
+        payload = {"apikey": CINETPAY_API_KEY, "site_id": CINETPAY_SITE_ID, "transaction_id": transaction_id, "amount": montant, "currency": "XOF", "description": f"{nb_credits} credits", "customer_email": current_user.email, "notify_url": "https://one7-2-0.onrender.com/webhook_cinetpay", "return_url": "https://one7-2-0.onrender.com/"}
         r = requests.post("https://api-checkout.cinetpay.com/v2/payment", json=payload).json()
-        if r['code'] == '201':
+        if r.get('code') == '201':
             supabase.table('transactions').insert({"cabinet_id": current_user.cabinet_id, "transaction_id": transaction_id, "nb_credits": nb_credits, "montant": montant, "statut": "en_attente"}).execute()
             return dbc.Button("Clique ici pour payer", href=r['data']['payment_url'], target="_blank", color="warning")
     return dash.no_update
 
-# ========== 9. CALLBACK EQUIPE + TRANSFERT ==========
+# ========== 10. CALLBACK EQUIPE + TRANSFERT ==========
 @app.callback([Output("table-equipe", "children"), Output("select-collab", "options")], [Input("tabs", "active_tab"), Input("btn-transfert", "n_clicks")])
 def charger_equipe(active_tab, n):
+    if not current_user.is_authenticated: return dash.no_update, dash.no_update
     if active_tab == "tab-equipe":
         res = supabase.table("users_cabinet").select("*").eq("cabinet_id", current_user.cabinet_id).execute()
         df = pd.DataFrame(res.data)
@@ -242,32 +267,19 @@ def transferer_credits(n, collab_id, nb_credits):
         except Exception as e: return dbc.Alert(str(e), color="danger")
     return dash.no_update
 
-# ========== 10. WEBHOOK CINETPAY ==========
+# ========== 11. WEBHOOK CINETPAY ==========
 @server.route('/webhook_cinetpay', methods=['POST'])
 def webhook_cinetpay():
     data = request.json
     if data['cpm_trans_status'] == 'ACCEPTED':
         trans = supabase.table('transactions').select("*").eq("transaction_id", data['cpm_trans_id']).single().execute()
         if trans.data and trans.data['statut'] == 'en_attente':
-            # On crédite le MANAGER du cabinet
             manager = supabase.table('users_cabinet').select("id, credits_perso").eq("cabinet_id", trans.data['cabinet_id']).eq("role", "Manager").single().execute()
             nouveau_solde = manager.data['credits_perso'] + trans.data['nb_credits']
             supabase.table('users_cabinet').update({"credits_perso": nouveau_solde}).eq("id", manager.data['id']).execute()
             supabase.table('transactions').update({"statut": "paye"}).eq("transaction_id", data['cpm_trans_id']).execute()
     return "OK", 200
 
-# ========== 11. RUN ==========
-app.layout = html.Div([dcc.Location(id='url'), html.Div(id='page-content')])
+# ========== 12. RUN ==========
 if __name__ == '__main__':
-    with app.app_context():
-    from werkzeug.security import generate_password_hash
-    # REMPLACE ICI
-    email = "admin@one7.com"
-    password = "One7Admin2026" 
-    
-    if not User.query.filter_by(email=email).first():
-        new_user = User(email=email, password=generate_password_hash(password))
-        db.session.add(new_user)
-        db.session.commit()
-        print("COMPTE ADMIN CREE")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
