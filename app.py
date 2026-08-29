@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user
 from flask import Flask, request, session
-from dash import dcc, html, Input, Output, State, dash_table, no_update, PreventUpdate
+from dash import dcc, html, Input, Output, State, dash_table, no_update
 
 load_dotenv()
 
