@@ -3,7 +3,7 @@ from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
 import pymupdf
-import google-genai
+from google import genai
 import os
 import uuid
 import requests
@@ -21,10 +21,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 CINETPAY_API_KEY = os.getenv("CINETPAY_API_KEY")
 CINETPAY_SITE_ID = os.getenv("CINETPAY_SITE_ID")
 
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
-
+response = client.models.generate_content(
+    model="gemini-3.6-flash",
+    contents="Salut"
+)
+print(response.text)
 server = Flask(__name__)
 server.secret_key = os.urandom(24)
 app = dash.Dash(__name__, server=server, external_stylesheets=[dbc.themes.BOOTSTRAP])
