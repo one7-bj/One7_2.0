@@ -1,0 +1,11 @@
+dash
+dash-bootstrap-components
+pandas
+PyMuPDF
+google-generativeai
+python-dotenv
+supabase
+flask-login
+requests
+gunicorn
+base64
