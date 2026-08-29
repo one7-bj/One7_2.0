@@ -259,4 +259,15 @@ def webhook_cinetpay():
 # ========== 11. RUN ==========
 app.layout = html.Div([dcc.Location(id='url'), html.Div(id='page-content')])
 if __name__ == '__main__':
+    with app.app_context():
+    from werkzeug.security import generate_password_hash
+    # REMPLACE ICI
+    email = "admin@one7.com"
+    password = "One7Admin2026" 
+    
+    if not User.query.filter_by(email=email).first():
+        new_user = User(email=email, password=generate_password_hash(password))
+        db.session.add(new_user)
+        db.session.commit()
+        print("COMPTE ADMIN CREE")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
