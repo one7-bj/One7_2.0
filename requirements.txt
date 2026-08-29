@@ -1,7 +1,7 @@
 dash
 dash-bootstrap-components
 pandas
-PyMuPDF
+pymupdf
 google-genai
 python-dotenv
 supabase
