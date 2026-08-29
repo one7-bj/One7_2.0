@@ -8,4 +8,3 @@ supabase
 flask-login
 requests
 gunicorn
-base64
