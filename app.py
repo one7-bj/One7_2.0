@@ -2,7 +2,7 @@ import dash
 from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
-import fitz  # PyMuPDF
+import PyMuPDF
 import google.generativeai as genai
 import os
 import uuid
