@@ -2,7 +2,7 @@ dash
 dash-bootstrap-components
 pandas
 PyMuPDF
-google-generativeai
+google-genai
 python-dotenv
 supabase
 flask-login
