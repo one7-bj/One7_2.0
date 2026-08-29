@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user
 from flask import Flask, request, session
+from dash import dcc, html, Input, Output, State, dash_table, no_update, PreventUpdate
 
 load_dotenv()
 
@@ -159,31 +160,31 @@ def render_tab_content(active_tab):
 # ========== 7. CALLBACK LOGIN + BYPASS ADMIN TEMPORAIRE ==========
 @app.callback(Output("login-output", "children"), Input("btn-login", "n_clicks"), [State("login-email", "value"), State("login-password", "value")])
 def login(n, email, password):
-    if n:
-        # ===== BYPASS TEMPORAIRE ADMIN =====
-        if email == "admin@one7.com" and password == "One7Admin2026":
-            # On force la session avec les infos de ta capture
-            user_data = {
-                'id': 'admin-temp-id', 
-                'email': 'admin@one7.com',
-                'cabinet_id': '092439a5-1edf-4793-83d0-efe19bfb5c',
-                'role': 'Manager',
-                'nom': 'Manager One7'
-            }
-            login_user(User(user_data))
-            return dcc.Location(pathname="/", id="redirect")
-        # ===================================
+    if not n:
+        raise PreventUpdate
+    
+    # ===== BYPASS TEMPORAIRE ADMIN =====
+    if email == "admin@one7.com" and password == "One7Admin2026":
+        user_data = {
+            'id': 'admin-temp-id', 
+            'email': 'admin@one7.com',
+            'cabinet_id': '092439a5-1edf-4793-83d0-efe19bfb5c',
+            'role': 'Manager',
+            'nom': 'Manager One7'
+        }
+        login_user(User(user_data))
+        return dcc.Location(pathname="/", id="redirect")
+    # ===================================
 
-        # Login normal Supabase
-        try:
-            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            user_data = supabase.table("users_cabinet").select("*").eq("id", res.user.id).single().execute().data
-            login_user(User(user_data))
-            return dcc.Location(pathname="/", id="redirect")
-        except Exception as e: 
-            return dbc.Alert(f"Email ou mot de passe incorrect: {str(e)}", color="danger")
-    return dash.no_update
-
+    # Login normal supabase
+    try:
+        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        user_data = supabase.table("users_cabinet").select("*").eq("id", res.user.id).single().execute().data
+        login_user(User(user_data))
+        return dcc.Location(pathname="/", id="redirect")
+    except Exception as e: 
+        return dbc.Alert("Email ou mot de passe incorrect", color="danger")
+        
 # ========== 8. CALLBACK TRAITEMENT + DÉDUCTION CRÉDIT ==========
 @app.callback(
     Output("output-container", "children"),
