@@ -256,4 +256,4 @@ def webhook_cinetpay():
 # ========== 11. RUN ==========
 app.layout = html.Div([dcc.Location(id='url'), html.Div(id='page-content')])
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
